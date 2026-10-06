@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'yaml'
 require 'erb'
 
@@ -212,6 +214,11 @@ module ScoutApm
       end
     end
 
+    # Shared, frozen instance of the no-op coercion used as the default in
+    # Config#value. Previously a throw-away NullCoercion was allocated on every
+    # config lookup, several of which happen per recorded layer.
+    NULL_COERCION = NullCoercion.new.freeze
+
     class SampleRateCoercion
       def coerce(val)
         return nil if val.nil?
@@ -271,6 +278,14 @@ module ScoutApm
       'backtrace_additional_directories' => JsonCoercion.new,
     }
 
+    # `KNOWN_CONFIG_OPTIONS` as a Hash, for O(1) membership checks on the
+    # per-lookup path (Config#value asks about every key it is given).
+    KNOWN_CONFIG_OPTIONS_LOOKUP = KNOWN_CONFIG_OPTIONS.each_with_object({}) { |key, memo| memo[key] = true }.freeze
+
+    # Environment variable name for each known config key, precomputed so the
+    # hot `config.value('dev_trace')` path doesn't build a new String each time.
+    KNOWN_ENV_KEYS = KNOWN_CONFIG_OPTIONS.each_with_object({}) { |key, memo| memo[key] = "SCOUT_#{key.upcase}".freeze }.freeze
+
 
     ################################################################################
     # Configuration layers & reading
@@ -311,8 +326,9 @@ module ScoutApm
     end
 
     def value(key)
-      if ! KNOWN_CONFIG_OPTIONS.include?(key)
-        logger.debug("Requested looking up a unknown configuration key: #{key} (not a problem. Evaluate and add to config.rb)")
+      unless KNOWN_CONFIG_OPTIONS_LOOKUP[key]
+        # Block form so the message isn't built unless it will actually be logged.
+        logger.debug { "Requested looking up a unknown configuration key: #{key} (not a problem. Evaluate and add to config.rb)" }
       end
 
       o = overlay_for_key(key)
@@ -323,7 +339,7 @@ module ScoutApm
                     nil
                   end
 
-      coercion = SETTING_COERCIONS.fetch(key, NullCoercion.new)
+      coercion = SETTING_COERCIONS.fetch(key, NULL_COERCION)
       coercion.coerce(raw_value)
     end
 
@@ -452,7 +468,12 @@ module ScoutApm
     class ConfigEnvironment
       def value(key)
         val = ENV[key_to_env_key(key)]
-        val.to_s.strip.length.zero? ? nil : val
+        # Short circuit the common (unset) case, which otherwise allocated via
+        # `to_s` + `strip` on every lookup.
+        return nil if val.nil?
+
+        val = val.to_s
+        val.strip.length.zero? ? nil : val
       end
 
       def has_key?(key)
@@ -460,7 +481,9 @@ module ScoutApm
       end
 
       def key_to_env_key(key)
-        'SCOUT_' + key.upcase
+        # Known keys are precomputed; anything else falls back to building the
+        # name (Config#value logs unknown keys).
+        KNOWN_ENV_KEYS[key] || "SCOUT_#{key.upcase}"
       end
 
       def any_keys_found?

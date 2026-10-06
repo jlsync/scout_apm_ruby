@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   module LayerConverters
     class DatabaseConverter < ConverterBase
@@ -13,9 +15,12 @@ module ScoutApm
 
         walker.on do |layer|
           next if skip_layer?(layer)
+          # layer.name is "Model/operation". Split once here rather than once
+          # per part - this runs for every ActiveRecord layer recorded.
+          parts = layer.name.to_s.split("/")
           stat = DbQueryMetricStats.new(
-            model_name(layer),
-            operation_name(layer),
+            parts.first || DEFAULT_MODEL,
+            parts[1] || DEFAULT_OPERATION,
             scope_layer.legacy_metric_name, # controller_scope
             1,                              # count, this is a single query, so 1
             layer.total_call_time,
@@ -49,14 +54,6 @@ module ScoutApm
 
       # If we can't name the operation, default to:
       DEFAULT_OPERATION = "other"
-
-      def model_name(layer)
-        layer.name.to_s.split("/").first || DEFAULT_MODEL
-      end
-
-      def operation_name(layer)
-        layer.name.to_s.split("/")[1] || DEFAULT_OPERATION
-      end
 
       def records_returned(layer)
         if layer.annotations

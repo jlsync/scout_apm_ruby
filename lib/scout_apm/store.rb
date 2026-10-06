@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Stores one or more minute's worth of Metrics/SlowTransactions in local ram.
 # When informed to by the background worker, it pushes the in-ram metrics off to
 # the layaway file for cross-process aggregation.
@@ -12,8 +14,21 @@ module ScoutApm
       @samplers = []
     end
 
+    # A StoreReportingPeriodTimestamp for the current minute.
+    #
+    # Reused for the duration of that minute: this is called once per
+    # `track!`, several times per recorded request, and each call otherwise
+    # allocated a Time, a normalized Time and a timestamp object.
     def current_timestamp
-      StoreReportingPeriodTimestamp.new(Time.now)
+      now = Time.now
+      minute = now.to_i - now.sec
+
+      if @current_timestamp_minute != minute
+        @current_timestamp_minute = minute
+        @current_timestamp = StoreReportingPeriodTimestamp.new(now)
+      end
+
+      @current_timestamp
     end
 
     def current_period

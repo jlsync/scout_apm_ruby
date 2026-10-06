@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   class MetricSet
     # We can't aggregate a handful of things like samplers (CPU, Memory), or
@@ -6,6 +8,9 @@ module ScoutApm
     # TODO: Figure out a way to not have this duplicate what's in Samplers, and also on server's ingest
     PASSTHROUGH_METRICS = ["CPU", "Memory", "Instance", "Controller", "SlowTransaction", "Percentile", "Job"]
 
+    # Hash form of the list above, for O(1) lookups as metrics are absorbed.
+    PASSTHROUGH_METRICS_LOOKUP = PASSTHROUGH_METRICS.each_with_object({}) { |type, memo| memo[type] = true }.freeze
+
     attr_reader :metrics
 
     def initialize
@@ -13,18 +18,22 @@ module ScoutApm
     end
 
     def absorb_all(metrics)
-      Array(metrics).each { |m| absorb(m) }
+      return if metrics.nil?
+      # Enumerable#each rather than Array(metrics).each: Array() on a Hash
+      # allocates a full array of pairs on every call.
+      metrics.each { |m| absorb(m) }
     end
 
     # Absorbs a single new metric into the aggregates
     def absorb(metric)
       meta, stat = metric
+      type = meta.type
 
-      if PASSTHROUGH_METRICS.include?(meta.type) # Leave as-is, don't attempt to combine into an /all key
+      if PASSTHROUGH_METRICS_LOOKUP[type] # Leave as-is, don't attempt to combine into an /all key
         @metrics[meta] ||= MetricStats.new
         @metrics[meta].combine!(stat)
 
-      elsif meta.type == "Errors" # Sadly special cased, we want both raw and aggregate values
+      elsif type == "Errors" # Sadly special cased, we want both raw and aggregate values
         # When combining MetricSets between different 
           @metrics[meta] ||= MetricStats.new
           @metrics[meta].combine!(stat)
@@ -36,7 +45,7 @@ module ScoutApm
         end
 
       else # Combine down to a single /all key
-        agg_meta = MetricMeta.new("#{meta.type}/all", :scope => meta.scope)
+        agg_meta = MetricMeta.new("#{type}/all", :scope => meta.scope)
         @metrics[agg_meta] ||= MetricStats.new
         @metrics[agg_meta].combine!(stat)
       end
