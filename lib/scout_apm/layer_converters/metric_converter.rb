@@ -15,16 +15,16 @@ module ScoutApm
 
         @metrics = {}
         @scope_layer_metric_meta = nil
-        @scoped_metric_meta = nil
+        @scoped_metric_metas = nil
 
         return unless scope_layer
 
         walker.on do |layer|
           next if skip_layer?(layer)
 
-          # There are only ever two distinct MetricMeta records here: the scope
-          # layer itself (unscoped), and every other layer (scoped to the scope
-          # layer, and named only by its type). Build each once instead of once
+          # The scope layer is recorded unscoped. Every other layer is scoped to
+          # it and named only by its type, so there is one MetricMeta per type
+          # (not one for all scoped layers) - build each once instead of once
           # per layer.
           if layer == scope_layer
             meta = (@scope_layer_metric_meta ||= MetricMeta.new(layer.legacy_metric_name))
@@ -32,7 +32,9 @@ module ScoutApm
           else
             # we don't need to use the full metric name for scoped metrics as we only display metrics aggregrated
             # by type.
-            meta = (@scoped_metric_meta ||= MetricMeta.new(layer.type, :scope => scope_layer.legacy_metric_name))
+            scoped_metas = (@scoped_metric_metas ||= {})
+            meta = scoped_metas[layer.type] ||=
+                     MetricMeta.new(layer.type, :scope => scope_layer.legacy_metric_name)
             scoped = true
           end
 
