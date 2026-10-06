@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   # Encapsulates our logic to determine when a backtrace should be collected.
   class CallSet

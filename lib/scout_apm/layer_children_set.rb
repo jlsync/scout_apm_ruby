@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   # A set of children records for any given Layer.  This implements some
   # rate-limiting logic.
@@ -33,8 +35,7 @@ module ScoutApm
     end
 
     def child_set(metric_type)
-      children[metric_type] = Set.new if !children.has_key?(metric_type)
-      children[metric_type]
+      @children[metric_type] ||= Set.new
     end
 
     # Add a new layer into this set
@@ -47,12 +48,8 @@ module ScoutApm
 
       if set.size >= unique_cutoff
         # find or create limited_layer
-        @limited_layers ||= Hash.new 
-        layer = if @limited_layers.has_key?(metric_type)
-                  @limited_layers[metric_type]
-                else
-                  @limited_layers[metric_type] = LimitedLayer.new(metric_type)
-                end
+        @limited_layers ||= Hash.new
+        layer = @limited_layers[metric_type] ||= LimitedLayer.new(metric_type)
 
         layer.absorb(child)
       else
@@ -62,7 +59,7 @@ module ScoutApm
     end
 
     def each
-      children.each do |_type, set|
+      @children.each do |_type, set|
         set.each do |child_layer|
           yield child_layer
         end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   module BucketNameSplitter
     def bucket_type
@@ -14,7 +16,9 @@ module ScoutApm
 
     private
     def split_metric_name(metric_name)
-      metric_name.to_s.split(/\//, 2)
+      # A String separator avoids the MatchData (and the regexp engine) that a
+      # Regexp separator allocates on every call.
+      metric_name.to_s.split("/", 2)
     end
 
     def scope_hash

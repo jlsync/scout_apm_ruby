@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   HistogramBin = Struct.new(:value, :count)
 
@@ -90,11 +92,7 @@ module ScoutApm
     def combine!(other)
       mutex.synchronize do
         other.mutex.synchronize do
-          @bins = (other.bins + @bins).
-            group_by {|b| b.value }.
-            map {|val, bs| [val, bs.inject(0) {|sum, b| sum + b.count }] }.
-            map {|val, sum| HistogramBin.new(val,sum) }.
-            sort_by { |b| b.value }
+          @bins = merge_bins(@bins, other.bins)
           @total += other.total
           trim
           self
@@ -114,6 +112,66 @@ module ScoutApm
     end
 
     private
+
+    # Merge two bins arrays (each sorted ascending by value) into a single
+    # sorted array, summing the counts of equal values.
+    #
+    # This replaces a `+ / group_by / map / map / sort_by` chain that allocated
+    # several intermediate Arrays and a grouping Hash on every merge - and
+    # #combine! runs once per query on every recorded request.
+    #
+    # New HistogramBin objects are always created, matching the previous
+    # behavior: the source bins can be shared with another (still mutable)
+    # histogram, so they must not be aliased into this one.
+    def merge_bins(mine, theirs)
+      merged = []
+      i = 0
+      j = 0
+      mine_length = mine.length
+      theirs_length = theirs.length
+
+      while i < mine_length && j < theirs_length
+        a = mine[i]
+        b = theirs[j]
+
+        if a.value < b.value
+          append_bin(merged, a.value, a.count)
+          i += 1
+        elsif a.value > b.value
+          append_bin(merged, b.value, b.count)
+          j += 1
+        else
+          append_bin(merged, a.value, a.count + b.count)
+          i += 1
+          j += 1
+        end
+      end
+
+      while i < mine_length
+        a = mine[i]
+        append_bin(merged, a.value, a.count)
+        i += 1
+      end
+
+      while j < theirs_length
+        b = theirs[j]
+        append_bin(merged, b.value, b.count)
+        j += 1
+      end
+
+      merged
+    end
+
+    # Appends a bin, collapsing it into the previous bin if the values match
+    # exactly (which keeps the "one bin per distinct value" invariant).
+    def append_bin(merged, value, count)
+      last = merged.last
+      if last && last.value == value
+        merged[-1] = HistogramBin.new(value, last.count + count)
+      else
+        merged << HistogramBin.new(value, count)
+      end
+    end
 
     # If we exactly match an existing bin, add to it, otherwise create a new bin holding a count for the new value.
     def create_new_bin(new_value)

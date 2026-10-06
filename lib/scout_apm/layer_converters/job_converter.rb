@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Queue/Critical (implicit count)
 #   Job/PasswordResetJob Scope=Queue/Critical (implicit count, & total time)
 #     JobMetric/Latency 10 Scope=Job/PasswordResetJob

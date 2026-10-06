@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Long running class that determines if, and in how much detail a potentially
 # slow transaction should be recorded in
 
