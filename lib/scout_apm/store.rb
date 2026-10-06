@@ -16,19 +16,29 @@ module ScoutApm
 
     # A StoreReportingPeriodTimestamp for the current minute.
     #
-    # Reused for the duration of that minute: this is called once per
-    # `track!`, several times per recorded request, and each call otherwise
-    # allocated a Time, a normalized Time and a timestamp object.
+    # Reused for the duration of that minute: this is called once per `track!`
+    # (several times per recorded request) and by the background worker through
+    # `tick!`, so each call otherwise allocated a Time, a normalized Time and a
+    # timestamp object.
+    #
+    # The cache is published under the store's monitor. That monitor is
+    # reentrant, so the `track!`/`write_to_layaway` callers that already hold it
+    # are fine, and it keeps the minute marker and the timestamp itself in sync:
+    # updating them outside the monitor let a concurrent caller for the same
+    # minute observe the new marker with the previous minute's timestamp - or
+    # nil on first use - and file metrics against the wrong reporting period.
     def current_timestamp
       now = Time.now
       minute = now.to_i - now.sec
 
-      if @current_timestamp_minute != minute
-        @current_timestamp_minute = minute
-        @current_timestamp = StoreReportingPeriodTimestamp.new(now)
-      end
+      @mutex.synchronize do
+        if @current_timestamp_minute != minute
+          @current_timestamp = StoreReportingPeriodTimestamp.new(now)
+          @current_timestamp_minute = minute
+        end
 
-      @current_timestamp
+        @current_timestamp
+      end
     end
 
     def current_period
