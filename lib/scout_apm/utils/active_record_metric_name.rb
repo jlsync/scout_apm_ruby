@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   module Utils
     class ActiveRecordMetricName
@@ -39,44 +41,51 @@ module ScoutApm
 
       # For the layer lookup.
       def hash
-        h = name.downcase.hash
-        h
+        downcased_name.hash
       end
 
       # For the layer lookup.
       # Reminder: #eql? is for Hash equality: returns true if obj and other refer to the same hash key.
       def eql?(o)
-        self.class    == o.class &&
-        name.downcase == o.name.downcase
+        self.class == o.class &&
+          downcased_name == o.downcased_name
       end
 
       alias_method :==, :eql?
+
+      protected
+
+      def downcased_name
+        @downcased_name ||= name.downcase
+      end
 
       private
 
       # This only returns a value if a name is provided via +initialize+.
       def operation
-        if parts.length >= 2
-          parts[1].downcase
+        op_parts = parts
+        if op_parts.length >= 2
+          op_parts[1].downcase
         end
       end
 
       # This only returns a value if a name is provided via +initialize+.
       def parts
-        name.split(" ")
+        @parts ||= name.split(" ")
       end
 
       # Returns nil if no match
       # Returns nil if the operation wasn't under developer control (and hence isn't interesting to report)
       def parse_operation
-        case operation
+        op = operation
+        case op
         when 'indexes', 'columns' then nil # not under developer control
         when 'load' then 'find'
-        when 'destroy', 'find', 'save', 'create', 'exists' then operation
+        when 'destroy', 'find', 'save', 'create', 'exists' then op
         when 'update' then 'save'
         else
           if model == 'Join'
-            operation
+            op
           end
         end
       end

@@ -34,8 +34,10 @@ module ScoutApm
       @unique_cutoff = unique_cutoff
     end
 
+    # Array per metric_type avoids allocating a Set wrapper + backing Hash for
+    # every child type on every parent Layer; each recorded Layer is distinct.
     def child_set(metric_type)
-      @children[metric_type] ||= Set.new
+      @children[metric_type] ||= []
     end
 
     # Add a new layer into this set

@@ -167,7 +167,7 @@ module ScoutApm
     def append_bin(merged, value, count)
       last = merged.last
       if last && last.value == value
-        merged[-1] = HistogramBin.new(value, last.count + count)
+        last.count += count
       else
         merged << HistogramBin.new(value, count)
       end

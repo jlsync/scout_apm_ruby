@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   module Instruments
     module Process
@@ -10,8 +12,12 @@ module ScoutApm
           rss.to_f / 1024 / kilobyte_adjust
         end
 
-        def rss
+        def self.rss
           ::Process.rusage.maxrss
+        end
+
+        def rss
+          self.class.rss
         end
 
         def rss_in_mb

@@ -19,12 +19,15 @@ module ScoutApm
 
         super
 
+        job_layer = layer_finder.job
+        queue_layer = layer_finder.queue
         @metrics = Hash.new
-        @meta_options = {:scope => layer_finder.job.legacy_metric_name}
+        @meta_options = {:scope => job_layer.legacy_metric_name}
+        scoped_metric_metas = {}
 
         walker.on do |layer|
-          next if layer == layer_finder.job
-          next if layer == layer_finder.queue
+          next if layer == job_layer
+          next if layer == queue_layer
           next if skip_layer?(layer)
 
           # we don't need to use the full metric name for scoped metrics as we
@@ -32,10 +35,8 @@ module ScoutApm
           # or similar.
           metric_name = layer.type
 
-          meta = MetricMeta.new(metric_name, meta_options)
-          @metrics[meta] ||= MetricStats.new( meta_options.has_key?(:scope) )
-
-          stat = @metrics[meta]
+          meta = scoped_metric_metas[metric_name] ||= MetricMeta.new(metric_name, meta_options)
+          stat = @metrics[meta] ||= MetricStats.new(true)
           stat.update!(layer.total_call_time, layer.total_exclusive_time)
         end
 

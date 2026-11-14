@@ -28,6 +28,12 @@ module ScoutApm
         layer_finder.scope
       end
 
+      # Subclasses override to attach hooks to the shared DepthFirstWalker.
+      # Subscope before/after hooks are opt-in via #register_subscope_hooks
+      # because only slow-trace converters consume @subscope_layers.
+      def register_hooks(walker)
+      end
+
       ################################################################################
       # Subscoping
       ################################################################################
@@ -35,7 +41,7 @@ module ScoutApm
       # Keep a list of subscopes, but only ever use the front one.  The rest
       # get pushed/popped in cases when we have many levels of subscopable
       # layers.  This lets us push/pop without otherwise keeping track very closely.
-      def register_hooks(walker)
+      def register_subscope_hooks(walker)
         walker.before do |layer|
           if layer.subscopable?
             (@subscope_layers ||= []).push(layer)
@@ -92,7 +98,12 @@ module ScoutApm
         return metric_hash unless @backtraces
 
         @backtraces.each do |meta_with_backtrace|
-          metric_hash.keys.find { |k| k == meta_with_backtrace }.backtrace = meta_with_backtrace.backtrace
+          metric_hash.each_key do |k|
+            if k == meta_with_backtrace
+              k.backtrace = meta_with_backtrace.backtrace
+              break
+            end
+          end
         end
         metric_hash
       end

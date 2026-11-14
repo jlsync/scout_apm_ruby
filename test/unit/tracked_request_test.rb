@@ -68,4 +68,10 @@ class TrackedRequestLayerManipulationTest < Minitest::Test
 
     assert_equal "override", job_layer.name
   end
+
+  def test_unique_id_simple_is_utf8
+    id = ScoutApm::Utils::UniqueId.simple(8)
+    assert_equal 8, id.length
+    assert_equal Encoding::UTF_8, id.encoding
+  end
 end

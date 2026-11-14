@@ -61,5 +61,10 @@ class ScoredItemSetTest < Minitest::Test
     assert set.to_a.include?("called_11_users/show"),   "Expected to see users/show in #{set.to_a.inspect}"
     assert set.to_a.include?("called_12_posts/index"),  "Expected to see posts/index in #{set.to_a.inspect}"
     assert set.to_a.include?("called_13_posts/move"),   "Expected to see posts/move in #{set.to_a.inspect}"
+
+    # Adding a score lower than the smallest retained score does not evict anything
+    set << FakeScoredItem.new("comments/index", 5)
+    assert_equal 3, set.count
+    assert !set.to_a.include?("called_5_comments/index")
   end
 end

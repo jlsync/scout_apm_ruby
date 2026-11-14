@@ -44,7 +44,9 @@ module ScoutApm
         return -1 # A negative score, should never be good enough to store.
       end
 
-      policies.map{ |p| p.call(request) }.sum
+      total = 0
+      policies.each { |p| total += p.call(request) }
+      total
     end
 
     def stored!(request)

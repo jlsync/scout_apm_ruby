@@ -1,10 +1,12 @@
+# frozen_string_literal: true
+
 module ScoutApm
   module Utils
     class UniqueId
       ALPHABET = ('a'..'z').to_a.freeze
 
       def self.simple(length=16)
-        s = ""
+        s = "".dup
         length.times do
             s << ALPHABET[rand(26)]
         end
@@ -16,6 +18,10 @@ module ScoutApm
     # The `trans` prefix is only for ease of reading logs - it should not be
     # interpreted to convey any sort of meaning.
     class TransactionId
+      def self.generate
+        "trans-#{SecureRandom.hex(16)}"
+      end
+
       def initialize
         @random = SecureRandom.hex(16)
       end
@@ -29,6 +35,10 @@ module ScoutApm
     # `span` prefix is only for ease of reading logs - it should not be
     # interpreted to convey any sort of meaning.
     class SpanId
+      def self.generate
+        "span-#{SecureRandom.hex(16)}"
+      end
+
       def initialize
         @random = SecureRandom.hex(16)
       end

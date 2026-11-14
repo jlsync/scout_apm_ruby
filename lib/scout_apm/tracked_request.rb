@@ -100,7 +100,7 @@ module ScoutApm
       @mem_start = mem_usage
       @recorder = agent_context.recorder
       @real_request = false
-      @transaction_id = ScoutApm::Utils::TransactionId.new.to_s
+      @transaction_id = ScoutApm::Utils::TransactionId.generate
       # The thread this request was created on. ActionController::Live copies the
       # raw Thread.current locals (including :scout_request) into its streaming
       # child thread, which would otherwise cause two threads to share and race
@@ -260,13 +260,13 @@ module ScoutApm
 
     # Grab backtraces more aggressively when running in dev trace mode
     def backtrace_threshold
-      @agent_context.dev_trace_enabled? ? 0.05 : 0.5 # the minimum threshold in seconds to record the backtrace for a metric.
+      @backtrace_threshold ||= @agent_context.dev_trace_enabled? ? 0.05 : 0.5 # the minimum threshold in seconds to record the backtrace for a metric.
     end
 
     # This may be in bytes or KB based on the OSX. We store this as-is here and only do conversion to MB in Layer Converters.
     # XXX: Move this to environment?
     def mem_usage
-      ScoutApm::Instruments::Process::ProcessMemory.new(@agent_context).rss
+      ScoutApm::Instruments::Process::ProcessMemory.rss
     end
 
     def capture_mem_delta!

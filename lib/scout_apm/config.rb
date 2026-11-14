@@ -511,7 +511,8 @@ module ScoutApm
       def value(key)
         if @file_loaded
           val = @settings[key]
-          val.to_s.strip.length.zero? ? nil : val
+          return nil if val.nil?
+          val.is_a?(String) && (val.empty? || val.strip.empty?) ? nil : val
         else
           nil
         end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   class ExternalServiceMetricStats
 
@@ -41,6 +43,16 @@ module ScoutApm
       @key ||= [domain_name, operation, scope]
     end
 
+    # Accumulate a single external service measurement in place, equivalent to
+    # creating a fresh ExternalServiceMetricStats and combining it with +self+.
+    def record!(call_count, call_time)
+      @call_count += call_count
+      @call_time += call_time
+      update_bounds(call_time, call_time)
+      @histogram.add(call_time)
+      self
+    end
+
     # Combine data from another ExternalServiceMetricStats into +self+. Modifies and returns +self+
     def combine!(other)
       return self if other == self
@@ -49,8 +61,7 @@ module ScoutApm
       @call_count += other.call_count
       @call_time += other.call_time
 
-      @min_call_time = other.min_call_time if @min_call_time.zero? or other.min_call_time < @min_call_time
-      @max_call_time = other.max_call_time if other.max_call_time > @max_call_time
+      update_bounds(other.min_call_time, other.max_call_time)
 
       @histogram.combine!(other.histogram)
       self
@@ -80,6 +91,13 @@ module ScoutApm
     # Don't call elsewhere, and don't set to 1 in the initializer.
     def increment_transaction_count!
       @transaction_count += 1
+    end
+
+    private
+
+    def update_bounds(min_time, max_time)
+      @min_call_time = min_time if @min_call_time.zero? or min_time < @min_call_time
+      @max_call_time = max_time if max_time > @max_call_time
     end
   end
 end

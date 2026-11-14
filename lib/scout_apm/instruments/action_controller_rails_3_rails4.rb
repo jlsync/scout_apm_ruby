@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   module Instruments
     # instrumentation for Rails 3 and Rails 4 is the same.

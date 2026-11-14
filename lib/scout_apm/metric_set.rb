@@ -15,41 +15,63 @@ module ScoutApm
 
     def initialize
       @metrics = Hash.new
+      @agg_metas = nil
+      @errors_agg_metas = nil
+      @combine_in_progress = false
     end
 
     def absorb_all(metrics)
       return if metrics.nil?
-      # Enumerable#each rather than Array(metrics).each: Array() on a Hash
-      # allocates a full array of pairs on every call.
-      metrics.each { |m| absorb(m) }
+      # Yielding two block args avoids Array(metrics) and per-entry [meta, stat]
+      # pair allocations when absorbing from a Hash (and destructures Arrays too).
+      metrics.each { |meta, stat| absorb_pair(meta, stat) }
     end
 
     # Absorbs a single new metric into the aggregates
     def absorb(metric)
       meta, stat = metric
+      absorb_pair(meta, stat)
+    end
+
+    private
+
+    def absorb_pair(meta, stat)
       type = meta.type
 
       if PASSTHROUGH_METRICS_LOOKUP[type] # Leave as-is, don't attempt to combine into an /all key
-        @metrics[meta] ||= MetricStats.new
-        @metrics[meta].combine!(stat)
+        combine_into(meta, stat)
 
       elsif type == "Errors" # Sadly special cased, we want both raw and aggregate values
         # When combining MetricSets between different 
-          @metrics[meta] ||= MetricStats.new
-          @metrics[meta].combine!(stat)
+        combine_into(meta, stat)
 
         if !@combine_in_progress
-          agg_meta = MetricMeta.new("Errors/Request", :scope => meta.scope)
-          @metrics[agg_meta] ||= MetricStats.new
-          @metrics[agg_meta].combine!(stat)
+          scope = meta.scope
+          agg_meta = (@errors_agg_metas ||= {})[scope] ||=
+            MetricMeta.new("Errors/Request", :scope => scope)
+          combine_into(agg_meta, stat)
         end
 
       else # Combine down to a single /all key
-        agg_meta = MetricMeta.new("#{type}/all", :scope => meta.scope)
-        @metrics[agg_meta] ||= MetricStats.new
-        @metrics[agg_meta].combine!(stat)
+        by_type = (@agg_metas ||= {})[type] ||= {}
+        scope = meta.scope
+        agg_meta = by_type[scope] ||= MetricMeta.new("#{type}/all", :scope => scope)
+        combine_into(agg_meta, stat)
       end
     end
+
+    def combine_into(meta, stat)
+      existing = @metrics[meta]
+      if existing
+        existing.combine!(stat)
+      else
+        created = MetricStats.new
+        created.combine!(stat)
+        @metrics[meta] = created
+      end
+    end
+
+    public
 
     # Sets a combine_in_progress flag to prevent double-counting Error metrics.
     # Without it, the Errors/Request number would be increasingly off as

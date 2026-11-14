@@ -180,4 +180,15 @@ class BacktraceParserTest < Minitest::Test
     assert_equal false, (result[1] =~ %r|components/shared/helpers.rb|).nil?
     assert_equal false, (result[2] =~ %r|plugins/analytics/tracker.rb|).nil?
   end
+
+  def test_regex_cache_isolates_distinct_roots_and_additional_dirs
+    bt_root_a = ["/root_a/app/models/a.rb", "/root_b/custom/b.rb"]
+    res_a = ScoutApm::Utils::BacktraceParser.new(bt_root_a, "/root_a", nil).call
+    res_b = ScoutApm::Utils::BacktraceParser.new(bt_root_a, "/root_b", ["custom"]).call
+
+    assert_equal 1, res_a.length
+    assert_equal 1, res_b.length
+    assert_match %r|app/models/a.rb|, res_a[0]
+    assert_match %r|custom/b.rb|, res_b[0]
+  end
 end

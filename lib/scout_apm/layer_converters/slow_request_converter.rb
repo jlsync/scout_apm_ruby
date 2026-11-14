@@ -55,7 +55,11 @@ module ScoutApm
                             root_layer.total_allocations,
                             @points,
                             limited?,
-                            span_trace)
+                            span_trace(mem_delta))
+      end
+
+      def register_hooks(walker)
+        register_subscope_hooks(walker)
       end
 
       # Full metrics from this request. These get stored permanently in a SlowTransaction.
@@ -91,10 +95,10 @@ module ScoutApm
       #  spot for this long term, but fixes an issue for now.   #
       ###########################################################
       
-      def span_trace
+      def span_trace(mem_delta = nil)
         ScoutApm::LayerConverters::TraceConverter.
           new(@context, @request, @layer_finder, @store).
-          call
+          call(true, mem_delta)
       end
     end
   end

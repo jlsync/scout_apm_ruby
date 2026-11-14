@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Stores StoreReportingPeriod objects in a per-process file before sending them to the server.
 # Coordinates a single process to collect up all individual files, merge them, then send.
 #
@@ -95,7 +97,7 @@ module ScoutApm
           begin
             logger.debug("Obtained Reporting Lock")
 
-            log_layaway_file_information
+            log_layaway_file_information if logger.debug?
 
             files = all_files_for(timestamp).reject{|l| l.to_s == coordinator_file.to_s }
             rps = files.map{ |layaway| LayawayFile.new(context, layaway).load }.compact

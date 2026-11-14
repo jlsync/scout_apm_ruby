@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Encapsulates adding context to requests. Context is stored via a simple Hash.
 #
 # There are 2 types of context: User and Extra.
@@ -7,7 +9,8 @@ module ScoutApm
   class Context
     attr_reader :context
 
-    VALID_TYPES = [String, Symbol, Numeric, Time, Date, TrueClass, FalseClass]
+    VALID_TYPES = [String, Symbol, Numeric, Time, Date, TrueClass, FalseClass].freeze
+    INVALID_KEY_CHARS = /[^\w-]/.freeze
 
     def initialize(context)
       @context = context
@@ -41,11 +44,11 @@ module ScoutApm
     # Add context
     # ScoutApm::Context.add(account: current_account.name)
     def add(hash)
-      update_context(:extra,hash)
+      update_context(@extra, hash)
     end
 
     def add_user(hash)
-      update_context(:user,hash)
+      update_context(@user, hash)
     end
 
     # Convenience accessor so you can just call @ScoutAPM::Context#add@
@@ -60,21 +63,18 @@ module ScoutApm
 
     private
 
-    def update_context(attr,hash)
-      valid_hash = Hash.new
-      # iterate over the hash of new context, adding to the valid_hash if validation checks pass.
-      hash.each do |key,value|
+    def update_context(target, hash)
+      added = false
+      hash.each do |key, value|
         # does both checks so we can get logging info on the value even if the key is invalid.
-        key_valid = key_valid?({key => value})
-        value_valid = value_valid?({key => value})
-        if key_valid and value_valid
-          valid_hash[key] = value
+        key_ok = key_valid?(key)
+        value_ok = value_valid?(key, value)
+        if key_ok && value_ok
+          target[key] = value
+          added = true
         end
       end
-
-      if valid_hash.any?
-        instance_variable_get("@#{attr.to_s}").merge!(valid_hash)
-      end
+      added ? target : nil
     end
 
     # Returns true if the obj is one of the provided valid classes.
@@ -89,32 +89,29 @@ module ScoutApm
       valid_type
     end
 
-    # take the entire Hash vs. just the value so the logger output is more helpful on error.
-    def value_valid?(key_value)
+    # take key + value directly without wrapper hashes while keeping detailed log output.
+    def value_valid?(key, value)
       # ensure one of our accepted types.
-      value = key_value.values.last
       if value.nil?
         false # don't log this ... easy to happen
       elsif !valid_type?(VALID_TYPES, value)
-        logger.info "The value for [#{key_value.keys.first}] is not a valid type [#{value.class}]."
+        logger.info "The value for [#{key}] is not a valid type [#{value.class}]."
         false
       else
         true
       end
     end
 
-    # for consistently with #value_valid?, takes a hash eventhough the value isn't yet used.
-    def key_valid?(key_value)
-      key = key_value.keys.first
+    def key_valid?(key)
       if key.nil?
-        false # don't log this ... easy to happen
+        return false # don't log this ... easy to happen
       # ensure a string or a symbol
-      elsif !valid_type?([String, Symbol],key)
+      elsif !key.is_a?(String) && !key.is_a?(Symbol)
         logger.info "The key [#{key}] is not a valid type [#{key.class}]."
         return false
       end
       # only alphanumeric, dash, and underscore allowed.
-      if key.to_s.match(/[^\w-]/)
+      if key =~ INVALID_KEY_CHARS
         logger.info "They key name [#{key}] is not valid."
         return false
       end

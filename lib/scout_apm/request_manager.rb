@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Request manager handles the threadlocal variable that holds the current
 # request. If there isn't one, then create one
 

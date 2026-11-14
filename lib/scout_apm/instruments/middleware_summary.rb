@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Inserts a single middleware at the outer edge of the stack (the first
 # middleware called, before passing to the rest of the stack) to trace the
 # total time spent between all middlewares. This instrument does not attempt to

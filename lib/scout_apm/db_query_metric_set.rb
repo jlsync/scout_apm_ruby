@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Note, this class must be Marshal Dumpable
 module ScoutApm
   class DbQueryMetricSet
@@ -12,6 +14,8 @@ module ScoutApm
     def marshal_load(array)
       @metrics = array.first
       @context = ScoutApm::Agent.instance.context
+      @stat_cache = nil
+      @limit = nil
     end
 
     def initialize(context)
@@ -19,6 +23,7 @@ module ScoutApm
 
       # A hash of DbQueryMetricStats values, keyed by DbQueryMetricStats.key
       @metrics = Hash.new
+      @stat_cache = nil
     end
 
     # Need to look this up again if we end up as nil. Which I guess can happen
@@ -63,6 +68,31 @@ module ScoutApm
       end
     end
 
+    # Records a single query measurement in place when the key already exists,
+    # avoiding DbQueryMetricStats + NumericHistogram + key array allocations
+    # for repeated queries in a transaction.
+    def record!(model_name, operation, scope, call_count, call_time, rows_returned)
+      by_model = @stat_cache && @stat_cache[scope]
+      by_op = by_model && by_model[model_name]
+      existing_stat = by_op && by_op[operation]
+      if existing_stat
+        existing_stat.record!(call_count, call_time, rows_returned)
+        return
+      end
+
+      existing_stat = metrics[[model_name, operation, scope]]
+      if existing_stat
+        existing_stat.record!(call_count, call_time, rows_returned)
+      elsif at_limit?
+        return
+      else
+        existing_stat = DbQueryMetricStats.new(model_name, operation, scope, call_count, call_time, rows_returned)
+        metrics[existing_stat.key] = existing_stat
+      end
+
+      cache_stat(scope, model_name, operation, existing_stat)
+    end
+
     def increment_transaction_count!
       metrics.each do |_key, db_query_metric_stat|
         db_query_metric_stat.increment_transaction_count!
@@ -91,6 +121,15 @@ module ScoutApm
     def at_limit?
       @limit ||= context.config.value('database_metric_limit')
       metrics.size >= @limit
+    end
+
+    private
+
+    def cache_stat(scope, model_name, operation, stat)
+      cache = (@stat_cache ||= {})
+      by_model = (cache[scope] ||= {})
+      by_op = (by_model[model_name] ||= {})
+      by_op[operation] = stat
     end
 
   end

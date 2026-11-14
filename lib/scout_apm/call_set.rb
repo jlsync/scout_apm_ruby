@@ -11,7 +11,7 @@ module ScoutApm
 
     def initialize
       @items = [] # An array of Layer descriptions that are associated w/a single Layer name (ex: User/find). Note this may contain nil items.
-      @grouped_items = Hash.new { |h, k| h[k] = [] } # items groups by their normalized name since multiple layers could have the same layer name.
+      @grouped_items = nil # lazy grouping as normalizing items and allocating the default-proc Hash can be expensive.
       @call_count = 0
       @captured = false # cached for performance
       @start_time = Time.now
@@ -24,7 +24,7 @@ module ScoutApm
       end
       @call_count += 1
       @items << item
-      if @grouped_items.any? # lazy grouping as normalizing items can be expensive.
+      if @grouped_items
         @grouped_items[unique_name_for(item)] << item
       end
     end
@@ -49,10 +49,10 @@ module ScoutApm
     end
 
     def grouped_items
-      if @grouped_items.any? 
-        @grouped_items
-      else
-        @grouped_items.merge!(@items.group_by { |item| unique_name_for(item) })
+      @grouped_items ||= begin
+        grouped = Hash.new { |h, k| h[k] = [] }
+        @items.each { |item| grouped[unique_name_for(item)] << item }
+        grouped
       end
     end
 

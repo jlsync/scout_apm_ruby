@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Note, this instrument has the same logic in both Tracer and Module Prepend
 # versions. If you update, be sure you update in both spots.
 #
