@@ -6,6 +6,17 @@
   merges bins in a single pass instead of `group_by`/`map`/`map`/`sort_by`. In a synthetic 41-layer web request this
   removes ~78% of the allocations made while recording, and ~77% with a 201-layer request.
 
+# 6.3.3
+
+- Encode the JSON reporting payload with the json library instead of the hand-written encoder (#641)
+- Sanitize each SQL statement only once instead of on every `SqlSanitizer#to_s` call (#642)
+- Remove `[[...]]` bind lists that are on their own lines from Postgres SQL (#645)
+
+# 6.3.2
+
+- Build the per-minute debug dumps of metrics, slow traces and auto-instrument histograms only when debug logging is enabled (#639)
+>>>>>>> origin/master
+
 # 6.3.1
 
 - Capture route names for Grape 4 (#635)

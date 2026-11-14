@@ -11,6 +11,10 @@ module ScoutApm
       MULTIPLE_QUESTIONS = /\?(,\?)+/.freeze
 
       PSQL_VAR_INTERPOLATION = %r|\[\[.*\]\]\s*\z|.freeze
+      # A line holding only a bind list, optionally followed by /* */ comments.
+      # The list body can't run past a "/*", and a comment body stops at its
+      # first "*/", so each line is matched in linear time.
+      PSQL_VAR_INTERPOLATION_LINES = %r{^[ \t]*\[\[(?:[^/\n]|/(?!\*))*\]\](?=(?:[ \t]*/\*(?:[^*\n]|\*(?!/))*\*/)*[ \t\r]*$)}.freeze
       PSQL_REMOVE_STRINGS = /'(?:[^']|'')*'/.freeze
       PSQL_REMOVE_JSON_STRINGS = /:"(?:[^"]|"")*"/.freeze
       PSQL_REMOVE_INTEGERS = /(?<!LIMIT )\b\d+\b/.freeze
@@ -44,7 +48,6 @@ module ScoutApm
       def initialize(sql)
         @raw_sql = sql
         @database_engine = ScoutApm::Agent.instance.context.environment.database_engine
-        @sanitized = false # only sanitize once.
       end
 
       def sql
@@ -52,17 +55,12 @@ module ScoutApm
       end
 
       def to_s
-        if @sanitized
-          sql
-        else
-          @sanitized = true
-        end
-        case database_engine
-        when :postgres then to_s_postgres
-        when :mysql    then to_s_mysql
-        when :sqlite   then to_s_sqlite
-        when :sqlserver then to_s_sqlserver
-        end
+        @to_s ||= case database_engine
+                  when :postgres then to_s_postgres
+                  when :mysql    then to_s_mysql
+                  when :sqlite   then to_s_sqlite
+                  when :sqlserver then to_s_sqlserver
+                  end
       end
 
       private
@@ -77,7 +75,10 @@ module ScoutApm
 
       def to_s_postgres
         sql.gsub!(PSQL_PLACEHOLDER, '?')
-        sql.gsub!(PSQL_VAR_INTERPOLATION, '')
+        if sql.include?('[[')
+          sql.gsub!(PSQL_VAR_INTERPOLATION, '')
+          sql.gsub!(PSQL_VAR_INTERPOLATION_LINES, '')
+        end
         # sql.gsub!(PSQL_REMOVE_STRINGS, '?')
         sql.gsub!(PSQL_AFTER_WHERE) {|c| c.gsub(PSQL_REMOVE_STRINGS, '?')}
         sql.gsub!(PSQL_AFTER_FROM_AS) {|c| c.gsub(PSQL_REMOVE_JSON_STRINGS, ':"?"')}
