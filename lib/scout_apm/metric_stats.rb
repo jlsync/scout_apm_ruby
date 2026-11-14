@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Stats that are associated with each instrumented method.
 module ScoutApm
 class MetricStats
@@ -22,7 +24,10 @@ class MetricStats
 
   # Note, that you must include exclusive_time if you wish to set
   # extra_metrics. A two argument use of this method won't do that.
-  def update!(call_time, exclusive_time=call_time, extra_metrics={})
+  #
+  # The default is nil rather than an empty Hash: a Hash default argument is
+  # allocated fresh on every call, and this is on the per-layer recording path.
+  def update!(call_time, exclusive_time=call_time, extra_metrics=nil)
     # If this metric is scoped inside another, use exclusive time for min/max and sum_of_squares. Non-scoped metrics
     # (like controller actions) track the total call time.
     t = (@scoped ? exclusive_time : call_time)

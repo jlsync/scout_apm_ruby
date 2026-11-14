@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   class DbQueryMetricStats
 
@@ -50,6 +52,17 @@ module ScoutApm
       @key ||= [model_name, operation, scope]
     end
 
+    # Accumulate a single query measurement in place, equivalent to creating a
+    # fresh DbQueryMetricStats and combining it with +self+.
+    def record!(call_count, call_time, rows_returned)
+      @call_count += call_count
+      @call_time += call_time
+      @rows_returned += rows_returned
+      update_bounds(call_time, call_time, rows_returned, rows_returned)
+      @histogram.add(call_time)
+      self
+    end
+
     # Combine data from another DbQueryMetricStats into +self+. Modifies and returns +self+
     def combine!(other)
       return self if other == self
@@ -59,11 +72,7 @@ module ScoutApm
       @rows_returned += other.rows_returned
       @call_time += other.call_time
 
-      @min_call_time = other.min_call_time if @min_call_time.zero? or other.min_call_time < @min_call_time
-      @max_call_time = other.max_call_time if other.max_call_time > @max_call_time
-
-      @min_rows_returned = other.min_rows_returned if @min_rows_returned.zero? or other.min_rows_returned < @min_rows_returned
-      @max_rows_returned = other.max_rows_returned if other.max_rows_returned > @max_rows_returned
+      update_bounds(other.min_call_time, other.max_call_time, other.min_rows_returned, other.max_rows_returned)
 
       @histogram.combine!(other.histogram)
       self
@@ -97,6 +106,16 @@ module ScoutApm
     # Don't call elsewhere, and don't set to 1 in the initializer.
     def increment_transaction_count!
       @transaction_count += 1
+    end
+
+    private
+
+    def update_bounds(min_time, max_time, min_rows, max_rows)
+      @min_call_time = min_time if @min_call_time.zero? or min_time < @min_call_time
+      @max_call_time = max_time if max_time > @max_call_time
+
+      @min_rows_returned = min_rows if @min_rows_returned.zero? or min_rows < @min_rows_returned
+      @max_rows_returned = max_rows if max_rows > @max_rows_returned
     end
   end
 end

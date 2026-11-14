@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   module LayerConverters
     class TraceConverter < ConverterBase
@@ -24,15 +26,18 @@ module ScoutApm
 
       # Unconditionally attempts to convert this into a DetailedTrace object.
       # Can return nil if the request didn't have any scope_layer or if `timeline_traces` aren't enabled.
-      def call
+      # SlowRequestConverter / SlowJobConverter pass already_stored=true and the
+      # precomputed mem_delta so we don't repeat policy updates or rusage syscalls.
+      def call(already_stored = false, precomputed_mem_delta = nil)
         return nil unless scope_layer
         return nil unless context.config.value('timeline_traces')
 
         # Since this request is being stored, update the needed counters
-        context.slow_request_policy.stored!(request)
+        context.slow_request_policy.stored!(request) unless already_stored
 
         # record the change in memory usage
-        mem_delta = ScoutApm::Instruments::Process::ProcessMemory.new(context).rss_to_mb(@request.capture_mem_delta!)
+        mem_delta = precomputed_mem_delta ||
+          ScoutApm::Instruments::Process::ProcessMemory.new(context).rss_to_mb(@request.capture_mem_delta!)
 
         transaction_id = request.transaction_id
         revision = context.environment.git_revision.sha
@@ -84,10 +89,10 @@ module ScoutApm
         )
       end
 
-      # Returns an array of span objects. Uses recursion to get all children
-      # wired up w/ correct parent_ids
-      def create_spans(layer, parent_id = nil)
-        span_id = ScoutApm::Utils::SpanId.new.to_s
+      # Returns an array of span objects. Uses recursion with a shared
+      # accumulator array to avoid O(n^2) intermediate array copies.
+      def create_spans(layer, parent_id = nil, result = [])
+        span_id = ScoutApm::Utils::SpanId.generate
 
         start_instant = layer.start_time
         stop_instant = layer.stop_time
@@ -109,25 +114,23 @@ module ScoutApm
           tags[:backtrace] = backtrace_parser(layer.backtrace) rescue nil
         end
 
-        # Collect up self, and all children into result array
-        result = []
         result << DetailedTraceSpan.new(
-          span_id.to_s,
-          parent_id.to_s,
+          span_id,
+          parent_id || "",
           start_instant,
           stop_instant,
           operation,
           tags)
 
-        layer.children.each do |child|
+        layer.each_child do |child|
           # Don't create spans from limited layers. These don't have start/stop times and our processing can't
           # handle these yet.
           unless over_span_limit?(result) || child.is_a?(LimitedLayer)
-            result += create_spans(child, span_id)
+            create_spans(child, span_id, result)
           end
         end
 
-        return result
+        result
       end
 
       # Take an array of ruby backtrace lines and split it into an array of hashes like:

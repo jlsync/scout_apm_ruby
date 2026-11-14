@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   module LayerConverters
     class ExternalServiceConverter < ConverterBase
@@ -11,20 +13,22 @@ module ScoutApm
 
         return unless scope_layer
 
+        scope_name = scope_layer.legacy_metric_name
         walker.on do |layer|
           next if skip_layer?(layer)
-          stat = ExternalServiceMetricStats.new(
+          @external_service_metric_set.record!(
             domain_name(layer),
-            operation_name(layer),          # operation name/verb. GET/POST/PUT etc.
-            scope_layer.legacy_metric_name, # controller_scope
-            1,                              # count, this is a single call, so 1
+            operation_name(layer), # operation name/verb. GET/POST/PUT etc.
+            scope_name,            # controller_scope
+            1,                     # count, this is a single call, so 1
             layer.total_call_time
           )
-          @external_service_metric_set << stat
         end
       end
 
       def record!
+        return nil if @external_service_metric_set.metrics.empty?
+
         # Everything in the metric set here is from a single transaction, which
         # we want to keep track of. (One web call did a User#find 10 times, but
         # only due to 1 http request)
@@ -46,7 +50,7 @@ module ScoutApm
       DEFAULT_DOMAIN = "Unknown"
 
       def domain_name(layer)
-        domain = ""
+        domain = nil
         desc_str = layer.desc.to_s
         desc_str = 'http://' + desc_str unless desc_str =~ /^http/i
         domain = URI.parse(desc_str).host

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Provides helpers to wrap sections of code in instrumentation
 #
 # The manual approach is to wrap your code in a call like:

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Note, this class must be Marshal Dumpable
 module ScoutApm
   class ExternalServiceMetricSet
@@ -12,6 +14,8 @@ module ScoutApm
     def marshal_load(array)
       @metrics = array.first
       @context = ScoutApm::Agent.instance.context
+      @stat_cache = nil
+      @limit = nil
     end
 
     def initialize(context)
@@ -19,6 +23,7 @@ module ScoutApm
 
       # A hash of ExternalServiceMetricStats values, keyed by ExternalServiceMetricStats.key
       @metrics = Hash.new
+      @stat_cache = nil
     end
 
     # Need to look this up again if we end up as nil. Which I guess can happen
@@ -63,6 +68,31 @@ module ScoutApm
       end
     end
 
+    # Records a single call measurement in place when the key already exists,
+    # avoiding ExternalServiceMetricStats + NumericHistogram + key array
+    # allocations for repeated calls in a transaction.
+    def record!(domain_name, operation, scope, call_count, call_time)
+      by_op = @stat_cache && @stat_cache[scope]
+      by_domain = by_op && by_op[operation]
+      existing_stat = by_domain && by_domain[domain_name]
+      if existing_stat
+        existing_stat.record!(call_count, call_time)
+        return
+      end
+
+      existing_stat = metrics[[domain_name, operation, scope]]
+      if existing_stat
+        existing_stat.record!(call_count, call_time)
+      elsif at_limit?
+        return
+      else
+        existing_stat = ExternalServiceMetricStats.new(domain_name, operation, scope, call_count, call_time)
+        metrics[existing_stat.key] = existing_stat
+      end
+
+      cache_stat(scope, operation, domain_name, existing_stat)
+    end
+
     def increment_transaction_count!
       metrics.each do |_key, external_service_metric_stat|
         external_service_metric_stat.increment_transaction_count!
@@ -91,6 +121,15 @@ module ScoutApm
     def at_limit?
       @limit ||= context.config.value('external_service_metric_limit')
       metrics.size >= @limit
+    end
+
+    private
+
+    def cache_stat(scope, operation, domain_name, stat)
+      cache = (@stat_cache ||= {})
+      by_op = (cache[scope] ||= {})
+      by_domain = (by_op[operation] ||= {})
+      by_domain[domain_name] = stat
     end
 
   end

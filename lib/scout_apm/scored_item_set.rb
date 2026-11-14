@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Attempts to keep the highest score.
 #
 # Each item must respond to:
@@ -34,8 +36,8 @@ module ScoutApm
 
       # If we have this item in the hash already, compare the new & old ones, and store
       # the new one only if it's higher score.
-      if items.has_key?(new_item.name)
-        if new_item.score > items[new_item.name].first
+      if (existing = items[new_item.name])
+        if new_item.score > existing.first
           store!(new_item)
         end
 
@@ -43,11 +45,13 @@ module ScoutApm
       # If the set is full, then we have to see if we evict anything to store
       # this one
       elsif full?
-        smallest_name, smallest_score = items.inject([nil, ARBITRARILY_LARGE]) do |(memo_name, memo_score), (name, (stored_score, _))|
-          if stored_score < memo_score
-            [name, stored_score]
-          else
-            [memo_name, memo_score]
+        smallest_name = nil
+        smallest_score = ARBITRARILY_LARGE
+        items.each do |name, pair|
+          stored_score = pair.first
+          if stored_score < smallest_score
+            smallest_name = name
+            smallest_score = stored_score
           end
         end
 

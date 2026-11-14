@@ -1,5 +1,11 @@
 # Pending
 
+- Reduce allocations and CPU in the request recording hot path. Layer child traversal no longer builds an empty
+  `LayerChildrenSet` per leaf layer, `MetricMeta` memoizes its downcased name/scope/desc and bucket split, `Config#value`
+  no longer allocates per lookup, `MetricConverter` reuses its two `MetricMeta` records, and `NumericHistogram#combine!`
+  merges bins in a single pass instead of `group_by`/`map`/`map`/`sort_by`. In a synthetic 41-layer web request this
+  removes ~78% of the allocations made while recording, and ~77% with a 201-layer request.
+
 # 6.3.3
 
 - Encode the JSON reporting payload with the json library instead of the hand-written encoder (#641)
@@ -9,6 +15,7 @@
 # 6.3.2
 
 - Build the per-minute debug dumps of metrics, slow traces and auto-instrument histograms only when debug logging is enabled (#639)
+>>>>>>> origin/master
 
 # 6.3.1
 

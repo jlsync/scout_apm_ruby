@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'scout_apm/utils/sql_sanitizer'
 
 module ScoutApm
@@ -25,7 +27,7 @@ module ScoutApm
 
     # All of this one, then all of the other.
     def merge(other)
-      @sqls += other.sqls
+      @sqls.concat(other.sqls)
     end
 
     def to_s
@@ -173,8 +175,6 @@ module ScoutApm
       def log(*args, &block)
         # Extract data from the arguments
         sql, name = args
-        metric_name = Utils::ActiveRecordMetricName.new(sql, name)
-        desc = SqlList.new(sql)
 
         # Get current ScoutApm context
         req = ScoutApm::RequestManager.lookup
@@ -192,74 +192,26 @@ module ScoutApm
         # Either: update the current layer and yield, don't start a new one.
         if current_layer && current_layer.type == "ActiveRecord"
           # TODO: Get rid of call .to_s, need to find this without forcing a previous run of the name logic
-          if current_layer.name.to_s == Utils::ActiveRecordMetricName::DEFAULT_METRIC
-            current_layer.name = metric_name
+          layer_name = current_layer.name
+          if layer_name.equal?(Utils::ActiveRecordMetricName::DEFAULT_METRIC) ||
+              layer_name.to_s == Utils::ActiveRecordMetricName::DEFAULT_METRIC
+            current_layer.name = Utils::ActiveRecordMetricName.new(sql, name)
           end
 
-          if current_layer.desc.nil?
-            current_layer.desc = SqlList.new
+          desc = current_layer.desc
+          if desc.nil?
+            desc = SqlList.new(sql)
+            current_layer.desc = desc
+          elsif !sql.nil?
+            desc.push(sql)
           end
-          current_layer.desc.merge(desc)
 
           super(*args, &block)
 
         # OR: Start a new layer, we didn't pick up instrumentation earlier in the stack.
         else
-          layer = ScoutApm::Layer.new("ActiveRecord", metric_name)
-          layer.desc = desc
-          req.start_layer(layer)
-          begin
-            super(*args, &block)
-          ensure
-            req.stop_layer
-          end
-        end
-      end
-      ruby2_keywords :log if respond_to?(:ruby2_keywords, true)
-    end
-
-    module ActiveRecordInstruments
-      def self.prepended(instrumented_class)
-        ScoutApm::Agent.instance.context.logger.info "Instrumenting #{instrumented_class.inspect}"
-      end
-
-      def log(*args, &block)
-        # Extract data from the arguments
-        sql, name = args
-        metric_name = Utils::ActiveRecordMetricName.new(sql, name)
-        desc = SqlList.new(sql)
-
-        # Get current ScoutApm context
-        req = ScoutApm::RequestManager.lookup
-        current_layer = req.current_layer
-
-        # If we call #log, we have a real query to run, and we've already
-        # gotten through the cache gatekeeper. Since we want to only trace real
-        # queries, and not repeated identical queries that just hit cache, we
-        # mark layer as ignorable initially in #find_by_sql, then only when we
-        # know it's a real database call do we mark it back as usable.
-        #
-        # This flag is later used in SlowRequestConverter to skip adding ignorable layers
-        current_layer.annotate_layer(:ignorable => false) if current_layer
-
-        # Either: update the current layer and yield, don't start a new one.
-        if current_layer && current_layer.type == "ActiveRecord"
-          # TODO: Get rid of call .to_s, need to find this without forcing a previous run of the name logic
-          if current_layer.name.to_s == Utils::ActiveRecordMetricName::DEFAULT_METRIC
-            current_layer.name = metric_name
-          end
-
-          if current_layer.desc.nil?
-            current_layer.desc = SqlList.new
-          end
-          current_layer.desc.merge(desc)
-
-          super(*args, &block)
-
-        # OR: Start a new layer, we didn't pick up instrumentation earlier in the stack.
-        else
-          layer = ScoutApm::Layer.new("ActiveRecord", metric_name)
-          layer.desc = desc
+          layer = ScoutApm::Layer.new("ActiveRecord", Utils::ActiveRecordMetricName.new(sql, name))
+          layer.desc = SqlList.new(sql)
           req.start_layer(layer)
           begin
             super(*args, &block)
@@ -344,7 +296,6 @@ module ScoutApm
         req = ScoutApm::RequestManager.lookup
         layer = ScoutApm::Layer.new("ActiveRecord", Utils::ActiveRecordMetricName::DEFAULT_METRIC)
         layer.annotate_layer(:ignorable => true)
-        layer.desc = SqlList.new
         req.start_layer(layer)
         req.ignore_children!
         begin
@@ -375,7 +326,6 @@ module ScoutApm
         req = ScoutApm::RequestManager.lookup
         layer = ScoutApm::Layer.new("ActiveRecord", Utils::ActiveRecordMetricName::DEFAULT_METRIC)
         layer.annotate_layer(:ignorable => true)
-        layer.desc = SqlList.new
         req.start_layer(layer)
         req.ignore_children!
         begin
@@ -405,7 +355,6 @@ module ScoutApm
 
         req = ScoutApm::RequestManager.lookup
         layer = ScoutApm::Layer.new("ActiveRecord", Utils::ActiveRecordMetricName.new("", "#{model} #{operation}"))
-        layer.desc = SqlList.new
         req.start_layer(layer)
         req.ignore_children!
         begin

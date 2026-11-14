@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   # A LimitedLayer is a lossy-compression approach to fall back on once we max out
   # the number of detailed layer objects we store.  See LayerChildrenSet for the
@@ -59,6 +61,11 @@ module ScoutApm
 
     def children
       Set.new
+    end
+
+    # A LimitedLayer is always a leaf; see Layer#each_child.
+    def each_child
+      nil
     end
 
     def annotations

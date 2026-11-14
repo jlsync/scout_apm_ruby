@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Provide a background thread queue to do the processing of
 # TrackedRequest objects, to remove it from the hot-path of returning a
 # web response
@@ -36,7 +38,7 @@ module ScoutApm
     def thread_func
       while req = queue.pop
         begin
-          logger.debug("recording in thread. Queue size: #{queue.size}")
+          logger.debug { "recording in thread. Queue size: #{queue.size}" }
           # For now, just proxy right back into the TrackedRequest object's record function
           req.record!
         rescue => e

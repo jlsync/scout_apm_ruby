@@ -38,6 +38,52 @@ class StoreTest < Minitest::Test
 
     assert_equal({}, s.instance_variable_get('@reporting_periods'))
   end
+
+  def test_current_timestamp_is_reused_within_a_minute_and_rolls_over
+    s = ScoutApm::Store.new(ScoutApm::AgentContext.new)
+    time = Time.at(1_800_000_010) # 10 seconds into a minute
+    minute = time.to_i - time.sec
+
+    Time.stubs(:now).returns(time)
+    first = s.current_timestamp
+    assert_equal minute, first.timestamp
+
+    # Later in the same minute: the same object.
+    Time.stubs(:now).returns(time + 30)
+    assert_same first, s.current_timestamp
+
+    # Next minute: a new timestamp for the new period.
+    Time.stubs(:now).returns(time + 60)
+    second = s.current_timestamp
+    refute_same first, second
+    assert_equal minute + 60, second.timestamp
+  end
+
+  # The cached minute marker and the cached timestamp have to be published
+  # together: a concurrent caller must never see the new marker with the old
+  # timestamp (which files metrics against the wrong reporting period), or a nil
+  # timestamp on first use.
+  def test_current_timestamp_is_consistent_across_threads
+    s = ScoutApm::Store.new(ScoutApm::AgentContext.new)
+    results = Queue.new
+
+    threads = 8.times.map do
+      Thread.new do
+        250.times { results << s.current_timestamp }
+      end
+    end
+    threads.each(&:join)
+
+    values = []
+    values << results.pop until results.empty?
+    assert_equal 2_000, values.size
+    assert values.none? { |value| value.nil? }
+
+    current_minute = Time.now.to_i - Time.now.sec
+    minutes = values.map { |value| value.timestamp }.uniq
+    assert minutes.all? { |minute| (current_minute - minute).abs <= 60 },
+           "unexpected reporting periods: #{minutes.inspect}"
+  end
 end
 
 class StoreReportingPeriodTest < Minitest::Test

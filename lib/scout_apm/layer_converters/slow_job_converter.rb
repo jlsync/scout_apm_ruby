@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Uses a different workflow than normal metrics. We ignore the shared walk of
 # the layer tree, and instead wait until we're sure we even want to do any
 # work. Only then do we go realize all the SlowJobRecord & metrics associated.
@@ -56,8 +58,12 @@ module ScoutApm
           job_layer.total_allocations,
           score,
           limited?,
-          span_trace
+          span_trace(mem_delta)
         )
+      end
+
+      def register_hooks(walker)
+        register_subscope_hooks(walker)
       end
 
       def create_metrics
@@ -92,10 +98,10 @@ module ScoutApm
       def queue_layer; layer_finder.queue; end
       def job_layer; layer_finder.job; end
 
-      def span_trace
+      def span_trace(mem_delta = nil)
         ScoutApm::LayerConverters::TraceConverter.
           new(@context, @request, @layer_finder, @store).
-          call
+          call(true, mem_delta)
       end
     end
   end

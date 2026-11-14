@@ -57,6 +57,45 @@ class DbQueryMetricSetTest < Minitest::Test
     assert_equal ["a", "b", "c", "d"], combined.metrics.map{|_k, m| m.key}.sort
   end
 
+  def test_record_in_place_matches_combine_and_respects_limit
+    config = make_fake_config(
+      'database_metric_limit' => 2,
+      'database_metric_report_limit' => 10
+    )
+    context = ScoutApm::AgentContext.new.tap { |c| c.config = config }
+
+    recorded = DbQueryMetricSet.new(context)
+    recorded.record!("User", "find", "Controller/users/index", 1, 0.25, 1)
+    recorded.record!("User", "find", "Controller/users/index", 1, 0.75, 4)
+    recorded.record!("Post", "find", "Controller/users/index", 1, 0.50, 2)
+    # Over limit: new key ignored, existing key still updated in place.
+    recorded.record!("Comment", "find", "Controller/users/index", 1, 0.90, 3)
+    recorded.record!("User", "find", "Controller/users/index", 1, 0.10, 0)
+
+    combined = DbQueryMetricSet.new(context)
+    combined << DbQueryMetricStats.new("User", "find", "Controller/users/index", 1, 0.25, 1)
+    combined << DbQueryMetricStats.new("User", "find", "Controller/users/index", 1, 0.75, 4)
+    combined << DbQueryMetricStats.new("Post", "find", "Controller/users/index", 1, 0.50, 2)
+    combined << DbQueryMetricStats.new("Comment", "find", "Controller/users/index", 1, 0.90, 3)
+    combined << DbQueryMetricStats.new("User", "find", "Controller/users/index", 1, 0.10, 0)
+
+    assert_equal 2, recorded.metrics.size
+    user_rec = recorded.metrics[["User", "find", "Controller/users/index"]]
+    user_exp = combined.metrics[["User", "find", "Controller/users/index"]]
+    assert_equal user_exp.call_count, user_rec.call_count
+    assert_in_delta user_exp.call_time, user_rec.call_time, 1e-9
+    assert_in_delta user_exp.min_call_time, user_rec.min_call_time, 1e-9
+    assert_in_delta user_exp.max_call_time, user_rec.max_call_time, 1e-9
+    assert_equal user_exp.rows_returned, user_rec.rows_returned
+    assert_equal user_exp.min_rows_returned, user_rec.min_rows_returned
+    assert_equal user_exp.max_rows_returned, user_rec.max_rows_returned
+    assert_equal user_exp.histogram.as_json, user_rec.histogram.as_json
+
+    loaded = Marshal.load(Marshal.dump(recorded))
+    loaded.record!("User", "find", "Controller/users/index", 1, 0.40, 2)
+    assert_equal 4, loaded.metrics[["User", "find", "Controller/users/index"]].call_count
+  end
+
   def fake_stat(key, call_time)
     OpenStruct.new(
       :key => key,

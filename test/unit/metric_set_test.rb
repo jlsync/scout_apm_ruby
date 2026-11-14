@@ -88,6 +88,31 @@ module ScoutApm
       assert_equal 2, metrics[3][1].call_count
     end
 
+    def test_absorb_all_hash_and_marshal_roundtrip
+      input = {}
+      3.times do |i|
+        meta = MetricMeta.new("ActiveRecord/Model#{i}/find", :scope => "Controller/users/index")
+        stat = MetricStats.new(true)
+        stat.update!(0.1)
+        input[meta] = stat
+      end
+      err_meta = MetricMeta.new("Errors/Controller/users/index", :scope => "Controller/users/index")
+      err_stat = MetricStats.new(true)
+      err_stat.update!(1)
+      input[err_meta] = err_stat
+
+      @metric_set.absorb_all(input)
+      assert_equal 3, @metric_set.metrics[MetricMeta.new("ActiveRecord/all", :scope => "Controller/users/index")].call_count
+      assert_equal 1, @metric_set.metrics[MetricMeta.new("Errors/Request", :scope => "Controller/users/index")].call_count
+
+      loaded = Marshal.load(Marshal.dump(@metric_set))
+      assert_equal @metric_set.metrics.keys.sort_by(&:metric_name),
+        loaded.metrics.keys.sort_by(&:metric_name)
+      assert_equal 3, loaded.metrics[MetricMeta.new("ActiveRecord/all", :scope => "Controller/users/index")].call_count
+      loaded.absorb_all(input)
+      assert_equal 6, loaded.metrics[MetricMeta.new("ActiveRecord/all", :scope => "Controller/users/index")].call_count
+    end
+
     ############################################################
     # Test helper functions
     ############################################################

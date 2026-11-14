@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   class Layer
     # Type: a general name for the kind of thing being tracked.
@@ -11,7 +13,14 @@ module ScoutApm
     # Accessor, so we can update a layer if multiple pieces of instrumentation work
     #   together at different layers to fill in the full data. See the ActiveRecord
     #   instrumentation for an example of how this is useful
-    attr_accessor :name
+    attr_reader :name
+
+    # The name can be filled in after the layer is created (see the ActiveRecord
+    # instrumentation), so invalidate anything derived from it when it changes.
+    def name=(new_name)
+      @name = new_name
+      @legacy_metric_name = nil
+    end
 
     # An array of children layers
     # For instance, if we are in a middleware, there will likely be only a single
@@ -20,9 +29,21 @@ module ScoutApm
     #
     # This useful to get actual time spent in this layer vs. children time
     #
-    # TODO: Check callers for compatibility w/ nil to avoid making an empty array
+    # This is memoized: it is read far more often than it is written (once per
+    # converter walk), and allocating a fresh empty set each read was a
+    # significant source of garbage in the recording path.
     def children
-      @children || LayerChildrenSet.new
+      @children ||= LayerChildrenSet.new
+    end
+
+    # Yields each child layer.
+    #
+    # Traversal code should prefer this over `children.each`: most layers in a
+    # request are leaves, and this doesn't allocate an empty LayerChildrenSet
+    # just to iterate nothing.
+    def each_child
+      @children.each { |child| yield child } if @children
+      nil
     end
 
     # Time objects recording the start & stop times of this layer
@@ -105,8 +126,10 @@ module ScoutApm
     # This is the old style name. This function is used for now, but should be
     # removed, and the new type & name split should be enforced through the
     # app.
+    #
+    # Memoized: it is called several times per layer as the request is recorded.
     def legacy_metric_name
-      "#{type}/#{name}"
+      @legacy_metric_name ||= "#{type}/#{name}"
     end
 
     def capture_backtrace!
@@ -159,9 +182,9 @@ module ScoutApm
     end
 
     def child_time
-      children.
-        map { |child| child.total_call_time }.
-        inject(0) { |sum, time| sum + time }
+      total = 0
+      each_child { |child| total += child.total_call_time }
+      total
     end
     private :child_time
 
@@ -185,9 +208,9 @@ module ScoutApm
     end
 
     def child_allocations
-      children.
-        map { |child| child.total_allocations }.
-        inject(0) { |sum, obj| sum + obj }
+      total = 0
+      each_child { |child| total += child.total_allocations }
+      total
     end
     private :child_allocations
   end

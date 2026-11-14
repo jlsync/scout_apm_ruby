@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   module LayerConverters
     class ConverterBase
@@ -14,12 +16,22 @@ module ScoutApm
         @store = store
 
         @root_layer = request.root_layer
-        @backtraces = []
+        # Both of these are created lazily - a converter is instantiated for
+        # each recorded request, and most of them never collect a backtrace or
+        # see a subscopable layer.
+        @backtraces = nil
+        @subscope_layers = nil
         @limited = false
       end
 
       def scope_layer
         layer_finder.scope
+      end
+
+      # Subclasses override to attach hooks to the shared DepthFirstWalker.
+      # Subscope before/after hooks are opt-in via #register_subscope_hooks
+      # because only slow-trace converters consume @subscope_layers.
+      def register_hooks(walker)
       end
 
       ################################################################################
@@ -29,12 +41,10 @@ module ScoutApm
       # Keep a list of subscopes, but only ever use the front one.  The rest
       # get pushed/popped in cases when we have many levels of subscopable
       # layers.  This lets us push/pop without otherwise keeping track very closely.
-      def register_hooks(walker)
-        @subscope_layers = []
-
+      def register_subscope_hooks(walker)
         walker.before do |layer|
           if layer.subscopable?
-            @subscope_layers.push(layer)
+            (@subscope_layers ||= []).push(layer)
           end
         end
 
@@ -46,7 +56,8 @@ module ScoutApm
       end
 
       def subscoped?(layer)
-        @subscope_layers.first && layer != @subscope_layers.first # Don't scope under ourself.
+        subs = @subscope_layers
+        subs && subs.first && layer != subs.first # Don't scope under ourself.
       end
 
       def subscope_name
@@ -77,15 +88,22 @@ module ScoutApm
         bt = ScoutApm::Utils::BacktraceParser.new(layer.backtrace).call
         if bt.any?
           meta.backtrace = bt
-          @backtraces << meta
+          (@backtraces ||= []) << meta
         end
       end
 
       # Call this after you finish walking the layers, and want to take the
       # set-aside backtraces and place them into the metas they match
       def attach_backtraces(metric_hash)
+        return metric_hash unless @backtraces
+
         @backtraces.each do |meta_with_backtrace|
-          metric_hash.keys.find { |k| k == meta_with_backtrace }.backtrace = meta_with_backtrace.backtrace
+          metric_hash.each_key do |k|
+            if k == meta_with_backtrace
+              k.backtrace = meta_with_backtrace.backtrace
+              break
+            end
+          end
         end
         metric_hash
       end
@@ -118,10 +136,17 @@ module ScoutApm
       # Meta Scope
       ################################################################################
 
+      # Reused for the "no scope" / "no desc" cases so we don't allocate an
+      # empty Hash per layer. `#merge` below returns a fresh Hash, and nothing
+      # downstream mutates these.
+      NO_META_OPTIONS = {}.freeze
+
       # When we make MetricMeta records, we need to determine a few things from layer.
       def make_meta_options(layer)
         scope_hash = make_meta_options_scope(layer)
         desc_hash = make_meta_options_desc_hash(layer)
+
+        return scope_hash if desc_hash.empty?
 
         scope_hash.merge(desc_hash)
       end
@@ -135,13 +160,15 @@ module ScoutApm
 
         # We don't scope the controller under itself
         elsif layer == scope_layer
-          {}
+          NO_META_OPTIONS
 
         # This layer is a top level metric ("ActiveRecord", or "HTTP" or
         # whatever, directly under the controller), so scope to the
         # Controller
         else
-          {:scope => scope_layer.legacy_metric_name}
+          # The scope layer doesn't change while a request is recorded, so this
+          # Hash (and the legacy_metric_name it holds) can be reused.
+          @scope_meta_options ||= {:scope => scope_layer.legacy_metric_name}
         end
       end
 
@@ -151,7 +178,7 @@ module ScoutApm
           trimmed_desc = desc_s[0 .. max_desc_length]
           {:desc => trimmed_desc}
         else
-          {}
+          NO_META_OPTIONS
         end
       end
 
@@ -190,7 +217,7 @@ module ScoutApm
 
       # Merged Metric - no specifics, just sum up by type (ActiveRecord, View, HTTP, etc)
       def store_aggregate_metric(layer, metric_hash, allocation_metric_hash)
-          meta = MetricMeta.new("#{layer.type}/all")
+          meta = aggregate_meta(layer.type)
 
           metric_hash[meta] ||= MetricStats.new(false)
           allocation_metric_hash[meta] ||= MetricStats.new(false)
@@ -202,6 +229,13 @@ module ScoutApm
           # allocations
           stat = allocation_metric_hash[meta]
           stat.update!(layer.total_allocations, layer.total_exclusive_allocations)
+      end
+
+      # The aggregate metric only depends on the layer's type, so reuse a single
+      # MetricMeta per type rather than building one per layer.
+      def aggregate_meta(type)
+        @aggregate_metas ||= {}
+        @aggregate_metas[type] ||= MetricMeta.new("#{type}/all")
       end
 
       ################################################################################

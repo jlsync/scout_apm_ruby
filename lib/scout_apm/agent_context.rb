@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ScoutApm
   class AgentContext
 
@@ -142,8 +144,12 @@ module ScoutApm
       @recorder ||= RecorderFactory.build(self)
     end
 
+    # `development` is a frozen constant because this is consulted once per
+    # stopped layer (see TrackedRequest#backtrace_threshold).
+    DEVELOPMENT_ENV = "development".freeze
+
     def dev_trace_enabled?
-      config.value('dev_trace') && environment.env == "development"
+      config.value('dev_trace') && environment.env == DEVELOPMENT_ENV
     end
 
     ###################

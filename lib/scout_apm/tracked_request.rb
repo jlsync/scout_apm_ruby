@@ -54,6 +54,33 @@ module ScoutApm
     # see that on Sidekiq.
     REQUEST_TYPES = ["Controller", "Job"]
 
+    # Hash lookup rather than Array#include? on the per-layer start path.
+    REQUEST_TYPES_LOOKUP = { "Controller" => true, "Job" => true }.freeze
+
+    # The converters run against a completed request. Memoized in a class method
+    # (rather than a constant) because this file is loaded before the
+    # LayerConverters, and so the Hash isn't rebuilt for every request.
+    def self.converters
+      @converters ||= {
+        :histograms => LayerConverters::Histograms,
+        :metrics => LayerConverters::MetricConverter,
+        :errors => LayerConverters::ErrorConverter,
+        :allocation_metrics => LayerConverters::AllocationMetricConverter,
+        :queue_time => LayerConverters::RequestQueueTimeConverter,
+        :job => LayerConverters::JobConverter,
+        :db => LayerConverters::DatabaseConverter,
+        :external_service => LayerConverters::ExternalServiceConverter,
+
+        :slow_job => LayerConverters::SlowJobConverter,
+        :slow_req => LayerConverters::SlowRequestConverter,
+
+        # This is now integrated into the slow_job and slow_req converters, so that
+        # we get the exact same set of traces either way. We can call it
+        # directly when we move away from the legacy trace styles.
+        # :traces => LayerConverters::TraceConverter,
+      }.freeze
+    end
+
     # Layers of type 'AutoInstrument' are not recorded if their total_call_time doesn't exceed this threshold.
     # AutoInstrument layers are frequently of short duration. This throws out this deadweight that is unlikely to be optimized.
     AUTO_INSTRUMENT_TIMING_THRESHOLD = 5/1_000.0 # units = seconds
@@ -62,7 +89,7 @@ module ScoutApm
       @agent_context = agent_context
       @store = store #this is passed in so we can use a real store (normal operation) or fake store (instant mode only)
       @layers = []
-      @call_set = Hash.new { |h, k| h[k] = CallSet.new }
+      @call_set = nil
       @annotations = {}
       @ignoring_children = 0
       @context = Context.new(agent_context)
@@ -73,7 +100,7 @@ module ScoutApm
       @mem_start = mem_usage
       @recorder = agent_context.recorder
       @real_request = false
-      @transaction_id = ScoutApm::Utils::TransactionId.new.to_s
+      @transaction_id = ScoutApm::Utils::TransactionId.generate
       # The thread this request was created on. ActionController::Live copies the
       # raw Thread.current locals (including :scout_request) into its streaming
       # child thread, which would otherwise cause two threads to share and race
@@ -102,7 +129,7 @@ module ScoutApm
 
       start_request(layer) unless @root_layer
 
-      if REQUEST_TYPES.include?(layer.type)
+      if REQUEST_TYPES_LOOKUP[layer.type]
         real_request!
       end
       @layers.push(layer)
@@ -176,6 +203,7 @@ module ScoutApm
     end
 
     BACKTRACE_BLACKLIST = ["Controller", "Job"]
+    BACKTRACE_BLACKLIST_LOOKUP = { "Controller" => true, "Job" => true }.freeze
     def capture_backtrace?(layer)
       return if ignoring_request?
 
@@ -185,7 +213,7 @@ module ScoutApm
 
       # Never capture backtraces for this kind of layer. The backtrace will
       # always be 100% framework code.
-      return false if BACKTRACE_BLACKLIST.include?(layer.type)
+      return false if BACKTRACE_BLACKLIST_LOOKUP[layer.type]
 
       # Only capture backtraces if we're in a real "request". Otherwise we
       # can spend lot of time capturing backtraces from the internals of
@@ -196,7 +224,7 @@ module ScoutApm
       return true if layer.total_exclusive_time > backtrace_threshold
 
       # Capture any layer that we've seen many times. Captures n+1 problems
-      return true if @call_set[layer.name].capture_backtrace?
+      return true if call_set(layer.name).capture_backtrace?
 
       # Don't capture otherwise
       false
@@ -218,18 +246,27 @@ module ScoutApm
 
     # Maintains a lookup Hash of call counts by layer name. Used to determine if we should capture a backtrace.
     def update_call_counts!(layer)
-      @call_set[layer.name].update!(layer.desc)
+      call_set(layer.name).update!(layer.desc)
+    end
+
+    # The per-layer-name CallSet, created on first use. Most layers never get
+    # this far (they may be blacklisted from backtrace capture, or the request
+    # may not be a "real" one), so creating these eagerly for every layer name
+    # wasted work.
+    def call_set(layer_name)
+      @call_set ||= {}
+      @call_set[layer_name] ||= CallSet.new
     end
 
     # Grab backtraces more aggressively when running in dev trace mode
     def backtrace_threshold
-      @agent_context.dev_trace_enabled? ? 0.05 : 0.5 # the minimum threshold in seconds to record the backtrace for a metric.
+      @backtrace_threshold ||= @agent_context.dev_trace_enabled? ? 0.05 : 0.5 # the minimum threshold in seconds to record the backtrace for a metric.
     end
 
     # This may be in bytes or KB based on the OSX. We store this as-is here and only do conversion to MB in Layer Converters.
     # XXX: Move this to environment?
     def mem_usage
-      ScoutApm::Instruments::Process::ProcessMemory.new(@agent_context).rss
+      ScoutApm::Instruments::Process::ProcessMemory.rss
     end
 
     def capture_mem_delta!
@@ -332,37 +369,24 @@ module ScoutApm
 
       context.add(:transaction_id => transaction_id)
 
-      # Make a constant, then call converters.dup.each so it isn't inline?
-      converters = {
-        :histograms => LayerConverters::Histograms,
-        :metrics => LayerConverters::MetricConverter,
-        :errors => LayerConverters::ErrorConverter,
-        :allocation_metrics => LayerConverters::AllocationMetricConverter,
-        :queue_time => LayerConverters::RequestQueueTimeConverter,
-        :job => LayerConverters::JobConverter,
-        :db => LayerConverters::DatabaseConverter,
-        :external_service => LayerConverters::ExternalServiceConverter,
-
-        :slow_job => LayerConverters::SlowJobConverter,
-        :slow_req => LayerConverters::SlowRequestConverter,
-
-        # This is now integrated into the slow_job and slow_req converters, so that
-        # we get the exact same set of traces either way. We can call it
-        # directly when we move away from the legacy trace styles.
-        # :traces => LayerConverters::TraceConverter,
-      }
+      # The converters are a fixed set, so grab the memoized Hash rather than
+      # rebuilding it on every request.
+      converters = self.class.converters
 
       walker = LayerConverters::DepthFirstWalker.new(self.root_layer)
-      converter_instances = converters.inject({}) do |memo, (slug, klass)|
+      # `Hash#each` yields key and value as separate arguments, avoiding the
+      # [key, value] Array that each_with_object/inject allocate per pair.
+      converter_instances = {}
+      converters.each do |slug, klass|
         instance = klass.new(@agent_context, self, layer_finder, @store)
         instance.register_hooks(walker)
-        memo[slug] = instance
-        memo
+        converter_instances[slug] = instance
       end
       walker.walk
-      converter_results = converter_instances.inject({}) do |memo, (slug,i)|
-        memo[slug] = i.record!
-        memo
+
+      converter_results = {}
+      converter_instances.each do |slug, instance|
+        converter_results[slug] = instance.record!
       end
 
       @agent_context.extensions.run_transaction_callbacks(converter_results,context,layer_finder.scope)
@@ -418,7 +442,9 @@ module ScoutApm
       return nil if ignoring_request?
 
       @unique_name ||= begin
-                         scope_layer = LayerConverters::FindLayerByType.new(self).scope
+                         # Reuse the memoized finder - building a new one here
+                         # meant walking the layer tree a second time.
+                         scope_layer = layer_finder.scope
                          if scope_layer
                            scope_layer.legacy_metric_name
                          else
